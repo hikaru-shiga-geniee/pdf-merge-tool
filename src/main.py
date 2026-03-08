@@ -359,23 +359,73 @@ class App(ctk.CTk):
             self._add_files(list(paths))
 
     def _add_files(self, paths: list[str]):
-        """ファイルを追加（ファイル名ソートで自動整列）"""
-        new_entries = []
-        for p in paths:
-            # 重複チェック
-            if any(f.path == p for f in self.files):
-                continue
-            try:
-                entry = PdfFileEntry(p)
-                new_entries.append(entry)
-            except Exception as e:
-                messagebox.showerror("エラー", f"ファイルを開けません:\n{p}\n{e}")
+        """ファイルを追加（ファイル名ソートで自動整列）- バックグラウンドで読み込み"""
+        # 重複除外
+        new_paths = [p for p in paths if not any(f.path == p for f in self.files)]
+        if not new_paths:
+            return
+
+        # UIをロード中状態にする
+        self._set_loading_state(True, f"読み込み中... 0 / {len(new_paths)} ファイル")
+
+        def _load():
+            new_entries = []
+            errors = []
+            for i, p in enumerate(new_paths):
+                try:
+                    entry = PdfFileEntry(p)
+                    new_entries.append(entry)
+                except Exception as e:
+                    errors.append(f"{os.path.basename(p)}: {e}")
+                self.after(
+                    0,
+                    lambda idx=i + 1: self._set_loading_state(
+                        True,
+                        f"読み込み中... {idx} / {len(new_paths)} ファイル",
+                        idx / len(new_paths),
+                    ),
+                )
+            self.after(0, lambda: self._on_files_loaded(new_entries, errors))
+
+        threading.Thread(target=_load, daemon=True).start()
+
+    def _set_loading_state(self, loading: bool, text: str = "", progress: float = -1):
+        """ドロップゾーンとフッターの読み込み状態を切り替え"""
+        if loading:
+            self._dropzone.configure(border_color="gray50")
+            self._dropzone_sub.configure(text=text)
+            # フッターにプログレスバーを表示
+            self._progress.pack(fill="x", pady=(0, 4))
+            if progress >= 0:
+                self._progress.configure(mode="determinate")
+                self._progress.set(progress)
+            else:
+                self._progress.configure(mode="indeterminate")
+                self._progress.set(0)
+            self._progress_label.pack(fill="x", pady=(0, 4))
+            self._progress_label.configure(text=text)
+            self._merge_btn.configure(state="disabled")
+        else:
+            self._dropzone.configure(border_color="gray70")
+            self._dropzone_sub.configure(text="または クリックしてファイルを選択")
+            self._progress.pack_forget()
+            self._progress_label.pack_forget()
+            self._merge_btn.configure(state="normal")
+
+    def _on_files_loaded(self, new_entries: list, errors: list[str]):
+        """ファイル読み込み完了時のコールバック"""
+        self._set_loading_state(False)
+
+        if errors:
+            messagebox.showerror(
+                "エラー",
+                f"以下のファイルを開けませんでした:\n" + "\n".join(errors),
+            )
 
         if not new_entries:
             return
 
         self.files.extend(new_entries)
-        # ファイル名昇順ソート
         self.files.sort(key=lambda f: f.filename)
         self._rebuild_file_list()
 
@@ -437,17 +487,27 @@ class App(ctk.CTk):
             return
 
         # UIをロック
+        total_pages = sum(f.page_count for f in self.files)
         self._merge_btn.configure(state="disabled", text="結合中...")
         self._progress.pack(fill="x", pady=(0, 4))
+        self._progress.configure(mode="determinate")
         self._progress.set(0)
         self._progress_label.pack(fill="x", pady=(0, 4))
-        self._progress_label.configure(text="0 / ? ページ")
+        self._progress_label.configure(text=f"結合中... 0 / {total_pages} ページ (0%)")
 
         file_data = [{"path": f.path, "rotation": f.rotation} for f in self.files]
 
         def _do_merge():
             try:
                 merge_pdfs(file_data, output_path, on_progress=self._on_merge_progress)
+                # 保存完了フェーズ
+                self.after(
+                    0,
+                    lambda: (
+                        self._progress.set(1.0),
+                        self._progress_label.configure(text="保存完了"),
+                    ),
+                )
                 self.after(0, lambda: self._on_merge_complete(output_path))
             except Exception as e:
                 self.after(
@@ -459,11 +519,14 @@ class App(ctk.CTk):
 
     def _on_merge_progress(self, processed: int, total: int):
         progress = processed / total if total > 0 else 0
+        pct = int(progress * 100)
         self.after(
             0,
             lambda: (
                 self._progress.set(progress),
-                self._progress_label.configure(text=f"{processed} / {total} ページ"),
+                self._progress_label.configure(
+                    text=f"結合中... {processed} / {total} ページ ({pct}%)"
+                ),
             ),
         )
 
