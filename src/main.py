@@ -44,16 +44,22 @@ class FileItemWidget(ctk.CTkFrame):
 
     def _build_ui(self):
         # --- ファイル情報行 ---
-        row = ctk.CTkFrame(self, fg_color=("gray95", "gray20"), corner_radius=8)
-        row.pack(fill="x", padx=4, pady=(4, 0))
+        self._row = ctk.CTkFrame(self, fg_color=("gray95", "gray20"), corner_radius=8)
+        self._row.pack(fill="x", padx=4, pady=(4, 0))
+        row = self._row
 
         # ドラッグハンドル + 連番
-        ctk.CTkLabel(row, text="≡", width=24, font=("", 16)).pack(
-            side="left", padx=(8, 0)
-        )
+        grip = ctk.CTkLabel(row, text="≡", width=24, font=("", 16), cursor="hand2")
+        grip.pack(side="left", padx=(8, 0))
         ctk.CTkLabel(
             row, text=f"#{self.index + 1}", width=32, font=("", 13, "bold")
         ).pack(side="left", padx=(4, 0))
+
+        # ドラッグ&ドロップ並べ替え用イベント（行全体 + ハンドル）
+        for w in [row, grip]:
+            w.bind("<ButtonPress-1>", self._on_drag_start)
+            w.bind("<B1-Motion>", self._on_drag_motion)
+            w.bind("<ButtonRelease-1>", self._on_drag_end)
 
         # ファイル名
         name_label = ctk.CTkLabel(
@@ -146,6 +152,35 @@ class FileItemWidget(ctk.CTkFrame):
 
         self._update_nav_buttons()
 
+    # --- ドラッグ&ドロップ並べ替え ---
+    def _on_drag_start(self, event):
+        self.app._drag_source_index = self.index
+        self.app._dragging = True
+        self._row.configure(fg_color=("gray85", "gray30"))
+
+    def _on_drag_motion(self, event):
+        if not getattr(self.app, "_dragging", False):
+            return
+        # マウスのウィンドウ内座標からドロップ先を特定
+        target_index = self.app._find_drop_target(event)
+        self.app._highlight_drop_target(target_index)
+
+    def _on_drag_end(self, event):
+        if not getattr(self.app, "_dragging", False):
+            return
+        self.app._dragging = False
+        target_index = self.app._find_drop_target(event)
+        self.app._clear_drop_highlight()
+        source_index = self.app._drag_source_index
+        if target_index is not None and target_index != source_index:
+            # リストの並べ替え
+            item = self.app.files.pop(source_index)
+            self.app.files.insert(target_index, item)
+            self.app._rebuild_file_list()
+        else:
+            # ドラッグキャンセル: 元の色に戻す
+            self._row.configure(fg_color=("gray95", "gray20"))
+
     def _rotate(self, delta: int):
         self.entry.rotation = (self.entry.rotation + delta) % 360
         self._angle_label.configure(text=f"{self.entry.rotation}°")
@@ -232,6 +267,9 @@ class App(ctk.CTk):
         self.minsize(600, 500)
 
         self.files: list[PdfFileEntry] = []
+        self._dragging = False
+        self._drag_source_index: int = -1
+        self._drop_highlight_index: int | None = None
 
         self._build_ui()
 
@@ -454,6 +492,47 @@ class App(ctk.CTk):
             self._total_label.configure(text=f"結合後: {total}ページ")
         else:
             self._total_label.configure(text="")
+
+    def _find_drop_target(self, event) -> int | None:
+        """マウス位置からドロップ先のインデックスを特定"""
+        widgets = self._file_list_frame.winfo_children()
+        if not widgets:
+            return None
+        # event座標をルートウィンドウ基準に変換
+        mouse_y = event.widget.winfo_rooty() + event.y
+        for i, w in enumerate(widgets):
+            wy = w.winfo_rooty()
+            wh = w.winfo_height()
+            # ウィジェットの中央より上か下かで挿入位置を判定
+            if mouse_y < wy + wh // 2:
+                return i
+        return len(widgets) - 1
+
+    def _highlight_drop_target(self, target_index: int | None):
+        """ドロップ先を視覚的にハイライト"""
+        if target_index == self._drop_highlight_index:
+            return
+        self._clear_drop_highlight()
+        self._drop_highlight_index = target_index
+        if target_index is None:
+            return
+        widgets = self._file_list_frame.winfo_children()
+        if 0 <= target_index < len(widgets):
+            widget = widgets[target_index]
+            if hasattr(widget, "_row") and target_index != self._drag_source_index:
+                widget._row.configure(
+                    border_width=2, border_color="#3b82f6"
+                )
+
+    def _clear_drop_highlight(self):
+        """ドロップ先ハイライトをクリア"""
+        if self._drop_highlight_index is not None:
+            widgets = self._file_list_frame.winfo_children()
+            if 0 <= self._drop_highlight_index < len(widgets):
+                widget = widgets[self._drop_highlight_index]
+                if hasattr(widget, "_row"):
+                    widget._row.configure(border_width=0)
+        self._drop_highlight_index = None
 
     def move_file(self, index: int, direction: int):
         new_index = index + direction
