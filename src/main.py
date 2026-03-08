@@ -314,13 +314,28 @@ class App(ctk.CTk):
         for child in dz_inner.winfo_children():
             child.bind("<Button-1>", lambda e: self._select_files())
 
-        # ファイルリスト見出し
-        self._file_list_header = ctk.CTkLabel(
-            self._main_frame,
+        # ファイルリスト見出し + リセットボタン
+        self._file_list_header = ctk.CTkFrame(self._main_frame, fg_color="transparent")
+        ctk.CTkLabel(
+            self._file_list_header,
             text="選択されたファイル:",
             font=("", 14, "bold"),
             anchor="w",
+        ).pack(side="left")
+        self._reset_btn = ctk.CTkButton(
+            self._file_list_header,
+            text="すべてクリア",
+            width=100,
+            height=28,
+            font=("", 12),
+            fg_color="transparent",
+            text_color="red",
+            border_width=1,
+            border_color="red",
+            hover_color=("#fee2e2", "#4a0000"),
+            command=self._reset_files,
         )
+        self._reset_btn.pack(side="right")
 
         # ファイルリストコンテナ
         self._file_list_frame = ctk.CTkFrame(
@@ -533,6 +548,11 @@ class App(ctk.CTk):
                 if hasattr(widget, "_row"):
                     widget._row.configure(border_width=0)
         self._drop_highlight_index = None
+
+    def _reset_files(self):
+        """ファイルリストをすべてクリア"""
+        self.files.clear()
+        self._rebuild_file_list()
 
     def move_file(self, index: int, direction: int):
         new_index = index + direction
