@@ -1,7 +1,15 @@
 [project]
 name = "pdf-merge-tool"
 version = "0.1.0"
-description = "Add your description here"
+description = "大容量の細切れPDFをローカルで結合・回転するデスクトップアプリ"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "PyMuPDF>=1.25.0",
+    "customtkinter>=5.2.0",
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dnd = ["tkinterdnd2>=0.4.2"]
+build = ["pyinstaller>=6.0"]
